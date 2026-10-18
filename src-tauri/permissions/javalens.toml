@@ -1,0 +1,12 @@
+
+[[permission]]
+identifier = "allow-javalens-commands"
+description = "Allows the main JavaLens window to use its Java visualizer and integrated terminal commands."
+commands.allow = [
+  "terminal_shell_info",
+  "run_java_visualizer",
+  "start_terminal",
+  "write_terminal",
+  "resize_terminal",
+  "stop_terminal"
+]
