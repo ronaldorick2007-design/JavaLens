@@ -1,11 +1,13 @@
+
 mod terminal_pty;
 
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
+use tauri::Manager;
 use terminal_pty::TerminalSession;
 
 pub(crate) struct TerminalState {
@@ -35,44 +37,85 @@ fn terminal_shell_info() -> String {
     }
 }
 
-/// Compile the currently open Java file, then run Watcher and return its snapshots.
-/// Keep Watcher.java beside src-tauri's Cargo.toml. Watcher class files are compiled
-/// into a temporary directory so Tauri's development watcher does not restart the app.
-#[tauri::command]
-fn run_java_visualizer(source_path: String) -> Result<JavaRunResult, String> {
-    let source = PathBuf::from(&source_path);
-    if !source.is_file() {
-        return Err(format!("Java source file does not exist: {}", source.display()));
+/// Locate Watcher.java in a packaged app or the development source tree.
+fn resolve_watcher_source(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    // Installed application: resolve the bundled resource.
+    if let Ok(path) = app
+        .path()
+        .resolve("Watcher.java", tauri::path::BaseDirectory::Resource)
+    {
+        if path.is_file() {
+            return Ok(path);
+        }
     }
+
+    // Development fallback: src-tauri/Watcher.java.
+    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("Watcher.java");
+
+    if dev_path.is_file() {
+        return Ok(dev_path);
+    }
+
+    Err(format!(
+        "Watcher.java was not found. Checked the bundled resource and development path: {}",
+        dev_path.display()
+    ))
+}
+
+/// Compile the selected Java file, run the JDI watcher, and return snapshots.
+#[tauri::command]
+fn run_java_visualizer(
+    app: tauri::AppHandle,
+    source_path: String,
+) -> Result<JavaRunResult, String> {
+    let source = PathBuf::from(&source_path);
+
+    if !source.is_file() {
+        return Err(format!(
+            "Java source file does not exist: {}",
+            source.display()
+        ));
+    }
+
     if source.extension().and_then(|s| s.to_str()) != Some("java") {
         return Err("Please select a .java source file.".to_string());
     }
 
-    let source_dir = source.parent().ok_or("Could not resolve Java source directory")?;
-    let source_dir = source_dir.canonicalize().map_err(|e| e.to_string())?;
-    let source = source.canonicalize().map_err(|e| e.to_string())?;
-    let file_stem = source.file_stem().and_then(|s| s.to_str())
-        .ok_or("Could not determine Java class name from filename")?;
+    let source_dir = source
+        .parent()
+        .ok_or("Could not resolve Java source directory")?
+        .canonicalize()
+        .map_err(|e| format!("Could not resolve Java source directory: {e}"))?;
 
-    // This first integration supports the usual default-package Java files.
-    // A later step can add package-aware class-name resolution if needed.
-    let watcher_source = Path::new(env!("CARGO_MANIFEST_DIR")).join("Watcher.java");
-    if !watcher_source.is_file() {
-        return Err(format!(
-            "Watcher.java not found at {}. Place Watcher.java beside the Tauri Cargo.toml.",
-            watcher_source.display()
-        ));
-    }
+    let source = source
+        .canonicalize()
+        .map_err(|e| format!("Could not resolve Java source file: {e}"))?;
 
+    let file_stem = source
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or("Could not determine Java class name from filename")?
+        .to_string();
+
+    // Resolve Watcher.java from the installed bundle or development tree.
+    let watcher_source = resolve_watcher_source(&app)?;
+
+    // Compile the user's Java program.
     let compile = Command::new("javac")
         .arg("-g")
-        .arg(source.as_os_str())
+        .arg(&source)
         .current_dir(&source_dir)
         .output()
-        .map_err(|e| format!("Could not start javac. Install a JDK and ensure javac is on PATH. {e}"))?;
+        .map_err(|e| {
+            format!(
+                "Could not start javac. Install a JDK and ensure javac is on PATH. {e}"
+            )
+        })?;
 
     let compile_stdout = String::from_utf8_lossy(&compile.stdout).into_owned();
     let compile_stderr = String::from_utf8_lossy(&compile.stderr).into_owned();
+
     if !compile.status.success() {
         return Ok(JavaRunResult {
             success: false,
@@ -84,7 +127,10 @@ fn run_java_visualizer(source_path: String) -> Result<JavaRunResult, String> {
         });
     }
 
-    let watcher_classes = std::env::temp_dir().join("javalens-watcher-classes");
+    // Compile watcher classes outside the source tree.
+    let watcher_classes = std::env::temp_dir()
+        .join("javalens-watcher-classes");
+
     std::fs::create_dir_all(&watcher_classes)
         .map_err(|e| format!("Could not create Watcher build directory: {e}"))?;
 
@@ -94,35 +140,51 @@ fn run_java_visualizer(source_path: String) -> Result<JavaRunResult, String> {
         .arg("-g")
         .arg("-d")
         .arg(&watcher_classes)
-        .arg(watcher_source.as_os_str())
+        .arg(&watcher_source)
         .output()
         .map_err(|e| format!("Could not compile Watcher.java: {e}"))?;
+
     if !watcher_compile.status.success() {
+        let watcher_stdout =
+            String::from_utf8_lossy(&watcher_compile.stdout);
+        let watcher_stderr =
+            String::from_utf8_lossy(&watcher_compile.stderr);
+
         return Ok(JavaRunResult {
             success: false,
             compile_stdout,
-            compile_stderr: format!("{}\nWatcher compilation failed:\n{}",
-                compile_stderr, String::from_utf8_lossy(&watcher_compile.stderr)),
+            compile_stderr: format!(
+                "{}\nWatcher compilation failed:\n{}\n{}",
+                compile_stderr, watcher_stdout, watcher_stderr
+            ),
             run_stdout: String::new(),
             run_stderr: String::new(),
             snapshots: Value::Array(Vec::new()),
         });
     }
 
+    // Run the watcher against the user's compiled Java class.
     let run = Command::new("java")
         .arg("--add-modules")
         .arg("jdk.jdi")
         .arg("-cp")
         .arg(&watcher_classes)
         .arg("Watcher")
-        .arg(file_stem)
+        .arg(&file_stem)
         .current_dir(&source_dir)
         .output()
-        .map_err(|e| format!("Could not start Java Watcher. Install a JDK and ensure java is on PATH. {e}"))?;
+        .map_err(|e| {
+            format!(
+                "Could not start Java Watcher. Install a JDK and ensure java is on PATH. {e}"
+            )
+        })?;
 
     let run_stdout = String::from_utf8_lossy(&run.stdout).into_owned();
     let run_stderr = String::from_utf8_lossy(&run.stderr).into_owned();
-    let snapshots = run_stdout.lines().rev()
+
+    let snapshots = run_stdout
+        .lines()
+        .rev()
         .find_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
         .unwrap_or_else(|| Value::Array(Vec::new()));
 
