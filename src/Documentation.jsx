@@ -9,7 +9,6 @@ const sections = [
         <Code>{`public class Main {
     public static void main(String[] args) {
         int[] numbers = {10, 20, 30, 40};
-        visual(numbers, "array");
 
         for (int i = 0; i < numbers.length; i++) {
             numbers[i] += 5;
