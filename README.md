@@ -6,8 +6,7 @@ JavaLens is a desktop application for writing Java code and visualizing its runt
 
 **[Download the latest release](https://github.com/ronaldorick2007-design/JavaLens/releases/latest)** · **[Report a bug](https://github.com/ronaldorick2007-design/JavaLens/issues)**
 
-<!-- Add a screenshot or demo GIF here -->
-<!-- Example: ![JavaLens demo](docs/images/javalens-demo.gif) -->
+<img width="1920" height="1080" alt="Screenshot From 2026-10-19 16-48-25" src="https://github.com/user-attachments/assets/bccf6007-7acf-4fee-a074-0f44fb68d4e4" />
 
 ## Features
 
