@@ -168,14 +168,25 @@ body.is-resizing * { cursor: inherit !important; }
 .terminal { flex: none; min-height: 96px; max-height: calc(100% - 120px); display: flex; flex-direction: column; background: var(--bg); }
 .terminal-host { flex: 1; min-height: 0; padding: 6px 10px 0; overflow: hidden; }
 .terminal-host .xterm, .terminal-host .xterm-viewport { background-color: transparent !important; }
-.terminal-status {
-  height: 20px; flex: none; display: flex; align-items: center; padding: 0 10px;
-  border-top: 1px solid var(--border); color: var(--muted); font-size: 11px;
-}
-
 /* ---------- Visualizer ---------- */
 .visual { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
 .visual-content { flex: 1; min-height: 0; overflow: auto; }
 .visual-empty { margin: 0; padding: 16px; color: var(--muted); font-size: 12px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* Run / Open Visual: busy state + topbar notice */
+.btn-busy { display: inline-flex; align-items: center; gap: 6px; }
+.spinner {
+  width: 11px; height: 11px; flex: none; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+.topbar-notice {
+  max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; padding: 0 4px;
+}
+.topbar-notice-ok { color: #16a34a; }
+.topbar-notice-error { color: var(--accent); }
