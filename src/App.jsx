@@ -9,13 +9,36 @@ import Documentation from "./Documentation";
 import { useTheme } from "./ThemeProvider";
 
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { exists, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
+import { desktopDir, homeDir, join } from "@tauri-apps/api/path";
 
 const basename = (path) =>
   path?.split(/[\\/]/).filter(Boolean).pop() || "Untitled";
 
+// Folder part of a path (Windows or POSIX), or null.
+const folderOf = (path) => {
+  const match = path?.match(/^(.*)[\\/][^\\/]*$/);
+  return match ? match[1] || "/" : null;
+};
+
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+// Default name offered for an untitled tab, guessed from its code so the right
+// extension (and therefore the right watcher) is picked.
+function suggestFileName(tab) {
+  if (tab.path || tab.name !== "New.java") return tab.name;
+
+  const code = tab.content || "";
+  const className = code.match(/\bpublic\s+class\s+(\w+)/);
+
+  if (className) return `${className[1]}.java`;
+  if (/\bpublic\s+static\s+void\s+main|\bSystem\.out\./.test(code)) return "Main.java";
+  if (/#\s*include\s*[<"]|\bstd::|\bint\s+main\s*\(/.test(code)) return "main.cpp";
+  if (/^\s*(def\s+\w+\s*\(|print\s*\(|for\s+\w+\s+in\s|from\s+\w+\s+import\s|import\s+\w+\s*$)/m.test(code)) return "main.py";
+
+  return "Main.java";
+}
 
 export default function App() {
   const { theme, setTheme } = useTheme();
@@ -29,14 +52,58 @@ export default function App() {
   const [visualOpen, setVisualOpen] = useState(false);
   const [documentationOpen, setDocumentationOpen] = useState(false);
   const [visualRunning, setVisualRunning] = useState(false);
-  const [snapshots, setSnapshots] = useState([]);
+  // Snapshots are kept per file tab so Open Visual can reuse them without re-running.
+  const [snapshotsByTab, setSnapshotsByTab] = useState({});
+  const [notice, setNotice] = useState(null);
 
   const terminalOutputRef = useRef(null);
   const columnRef = useRef(null);
   const bodyRef = useRef(null);
+  const runningRef = useRef(false);
+  const lastDirRef = useRef(null);
 
   const active =
     tabs.find((tab) => tab.id === activeId) || tabs[0] || null;
+
+  const snapshots = (active && snapshotsByTab[active.id]) || [];
+
+  const write = (text) => terminalOutputRef.current?.(text);
+
+  // Where file dialogs start: the active file's folder, then the last folder
+  // used, then Desktop, then Home. A folder confirmed missing is skipped; one
+  // that can't be checked is trusted (the OS dialog falls back on its own).
+  async function startFolder() {
+    const candidates = [folderOf(active?.path), lastDirRef.current];
+
+    for (const lookup of [desktopDir, homeDir]) {
+      try {
+        candidates.push(await lookup());
+      } catch {
+        /* not available on this system; try the next one */
+      }
+    }
+
+    for (const dir of candidates) {
+      if (!dir) continue;
+      try {
+        if (await exists(dir)) return dir;
+      } catch {
+        return dir;
+      }
+    }
+
+    return undefined;
+  }
+
+  async function dialogPath(fileName) {
+    const dir = await startFolder();
+    if (!dir) return fileName;
+    try {
+      return await join(dir, fileName);
+    } catch {
+      return fileName;
+    }
+  }
 
   const update = (patch) => {
     if (!active) return;
@@ -64,6 +131,7 @@ export default function App() {
   async function openFile() {
     try {
       const path = await open({
+        defaultPath: await startFolder(),
         multiple: false,
         filters: [
           {
@@ -79,6 +147,9 @@ export default function App() {
               "rs",
               "c",
               "cpp",
+              "cc",
+              "cxx",
+              "py",
               "h",
               "md",
             ],
@@ -87,6 +158,8 @@ export default function App() {
       });
 
       if (!path || typeof path !== "string") return;
+
+      lastDirRef.current = folderOf(path);
 
       const existing = tabs.find((tab) => tab.path === path);
 
@@ -121,14 +194,14 @@ export default function App() {
 
       if (!path || saveAs) {
         path = await save({
-          defaultPath:
-            active.name === "New.java" ? "Main.java" : active.name,
+          defaultPath: await dialogPath(suggestFileName(active)),
         });
       }
 
       if (!path) return;
 
       await writeTextFile(path, active.content);
+      lastDirRef.current = folderOf(path);
       update({ path, name: basename(path), dirty: false });
     } catch (error) {
       console.error("Save failed:", error);
@@ -143,6 +216,7 @@ export default function App() {
     const remaining = tabs.filter((tab) => tab.id !== id);
 
     setTabs(remaining);
+    setSnapshotsByTab(({ [id]: _removed, ...rest }) => rest);
 
     if (
       activeId === id ||
@@ -156,37 +230,66 @@ export default function App() {
     }
   }
 
-  async function runVisual() {
-    if (!active) return;
+  // Compile + run the active file under its watcher and store the snapshots.
+  // Triggered by the topbar Run button.
+  async function runProgram() {
+    if (!active || runningRef.current) return;
 
-    const write = (text) => terminalOutputRef.current?.(text);
+    const tabId = active.id;
+    const patchTab = (patch) =>
+      setTabs((previous) =>
+        previous.map((tab) => (tab.id === tabId ? { ...tab, ...patch } : tab))
+      );
     let path = active.path;
+
+    runningRef.current = true;
 
     try {
       if (!path) {
         path = await save({
-          defaultPath:
-            active.name === "New.java" ? "Main.java" : active.name,
+          defaultPath: await dialogPath(suggestFileName(active)),
         });
 
         if (!path) return;
       }
 
-      if (!path.toLowerCase().endsWith(".java")) {
-        write("\x1b[31mVisual mode requires a .java file.\x1b[0m");
+      if (!/\.(java|cpp|cc|cxx|py)$/i.test(path)) {
+        const text = "Visual mode supports .java, .cpp and .py files.";
+        write(`\x1b[31m${text}\x1b[0m`);
+        setNotice({ kind: "error", text });
         return;
       }
 
-      await writeTextFile(path, active.content);
-      update({ path, name: basename(path), dirty: false });
+      try {
+        await writeTextFile(path, active.content);
+      } catch (error) {
+        // The file's folder was moved/deleted or isn't writable: offer Desktop / Home.
+        write(
+          `\x1b[33m[JavaLens Visual] Could not save to ${path} (${String(error)}). Choose another location.\x1b[0m`
+        );
 
-      setVisualOpen(true);
+        const retry = await save({ defaultPath: await dialogPath(basename(path)) });
+        if (!retry) return;
+
+        if (!/\.(java|cpp|cc|cxx|py)$/i.test(retry)) {
+          const text = "Visual mode supports .java, .cpp and .py files.";
+          write(`\x1b[31m${text}\x1b[0m`);
+          setNotice({ kind: "error", text });
+          return;
+        }
+
+        path = retry;
+        await writeTextFile(path, active.content);
+      }
+
+      lastDirRef.current = folderOf(path);
+      patchTab({ path, name: basename(path), dirty: false });
+
+      setNotice(null);
       setVisualRunning(true);
-      setSnapshots([]);
-      setCurrentLine(null);
 
       write(
-        `\x1b[90m\r\n[JavaLens Visual] Compiling ${basename(path)}...\x1b[0m`
+        `\x1b[90m\r\n[JavaLens Visual] Compiling and running ${basename(path)}...\x1b[0m`
       );
 
       const result = await invoke("run_java_visualizer", {
@@ -203,29 +306,75 @@ export default function App() {
         write(`\x1b[31m${result.run_stderr}\x1b[0m`);
       }
 
-      if (result.success && Array.isArray(result.snapshots)) {
-        setSnapshots(result.snapshots);
+      if (
+        result.success &&
+        Array.isArray(result.snapshots) &&
+        result.snapshots.length > 0
+      ) {
+        // Only replace the stored snapshots on success; a failed run keeps
+        // whatever the visualizer was already showing.
+        setSnapshotsByTab((previous) => ({
+          ...previous,
+          [tabId]: result.snapshots,
+        }));
 
         write(
-          `\x1b[32m[JavaLens Visual] Captured ${result.snapshots.length} snapshots; data shown in visualizer.\x1b[0m`
+          `\x1b[32m[JavaLens Visual] Captured ${result.snapshots.length} snapshots.\x1b[0m`
         );
-      } else if (!result.compile_stderr) {
-        write(
-          "\x1b[31m[JavaLens Visual] No snapshots were captured.\x1b[0m"
-        );
+        if (result.message) write(`\x1b[33m${result.message}\x1b[0m`);
+
+        setNotice({
+          kind: "ok",
+          text: visualOpen
+            ? `${result.snapshots.length} snapshots loaded`
+            : `${result.snapshots.length} snapshots ready – click Open Visual`,
+        });
+      } else {
+        const text = result.message || "Run failed. No snapshots were captured.";
+        write(`\x1b[31m[JavaLens Visual] ${text}\x1b[0m`);
+        setNotice({ kind: "error", text });
       }
     } catch (error) {
       console.error("Visual run failed:", error);
       write(`\x1b[31m[JavaLens Visual] ${String(error)}\x1b[0m`);
+      setNotice({ kind: "error", text: String(error) });
     } finally {
+      runningRef.current = false;
       setVisualRunning(false);
     }
+  }
+
+  // Opens the visualizer from existing snapshots; never runs anything.
+  function openVisual() {
+    if (!active) return;
+
+    if (snapshots.length === 0) {
+      const text = "No snapshots found. Run the program first.";
+      write(`\x1b[33m[JavaLens Visual] ${text}\x1b[0m`);
+      setNotice({ kind: "error", text });
+      return;
+    }
+
+    setNotice(null);
+    setVisualOpen(true);
   }
 
   function closeVisual() {
     setVisualOpen(false);
     setCurrentLine(null);
   }
+
+  // Clear the editor's current-line highlight when the shown file has no snapshots.
+  useEffect(() => {
+    if (snapshots.length === 0) setCurrentLine(null);
+  }, [active?.id, snapshots.length]);
+
+  // Transient topbar message.
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   const actions = useRef({});
   actions.current = { newFile, openFile, saveFile };
@@ -325,20 +474,41 @@ export default function App() {
 
         <div className="spacer" />
 
+        {notice && (
+          <span
+            className={`topbar-notice ${notice.kind === "error" ? "topbar-notice-error" : "topbar-notice-ok"}`}
+            role="status"
+          >
+            {notice.text}
+          </span>
+        )}
+
+        <button
+          type="button"
+          className={`btn ${visualRunning ? "btn-busy" : ""}`}
+          disabled={visualRunning || !active}
+          aria-busy={visualRunning}
+          title="Compile and run the current file to generate snapshots"
+          onClick={() => void runProgram()}
+        >
+          {visualRunning ? (
+            <>
+              <span className="spinner" aria-hidden="true" />
+              Running…
+            </>
+          ) : (
+            "Run"
+          )}
+        </button>
+
         <button
           type="button"
           className="btn"
-          disabled={visualRunning || (!visualOpen && !active)}
-          title="Compile current Java file and open visualizer"
-          onClick={() =>
-            visualOpen ? closeVisual() : void runVisual()
-          }
+          disabled={!visualOpen && !active}
+          title="Open the visualizer using the last run's snapshots"
+          onClick={() => (visualOpen ? closeVisual() : openVisual())}
         >
-          {visualRunning
-            ? "Running…"
-            : visualOpen
-              ? "Close Visual"
-              : "Visual"}
+          {visualOpen ? "Close Visual" : "Open Visual"}
         </button>
 
         <button
@@ -402,6 +572,7 @@ export default function App() {
               height={terminalHeight}
               theme={theme}
               outputRef={terminalOutputRef}
+              startDir={folderOf(active?.path)}
             />
           </div>
 
@@ -424,16 +595,6 @@ export default function App() {
                     )}
                   </span>
 
-                  <div className="panel-actions">
-                    <button
-                      type="button"
-                      className="btn btn-small"
-                      onClick={() => void runVisual()}
-                      disabled={visualRunning || !active}
-                    >
-                      Run again
-                    </button>
-                  </div>
                 </header>
 
                 <div className="visual-content">
@@ -446,7 +607,7 @@ export default function App() {
                     <p className="visual-empty">
                       {visualRunning
                         ? "Compiling and running…"
-                        : "No snapshot data."}
+                        : "No snapshots found. Run the program first."}
                     </p>
                   )}
                 </div>
