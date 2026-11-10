@@ -232,7 +232,8 @@ export default function Terminal({ shell, onShellChange, height, theme, outputRe
         </div>
       </header>
       <div className="terminal-host" ref={hostRef} onClick={() => termRef.current?.focus()} />
-      <footer className="terminal-status">{status}</footer>
+      {/* Only surface problems; the idle "persistent shell" note is not shown. */}
+      {/failed/i.test(status) && <footer className="terminal-status">{status}</footer>}
     </section>
   );
 }
