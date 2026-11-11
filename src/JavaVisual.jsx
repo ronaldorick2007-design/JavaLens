@@ -15,7 +15,7 @@ import { useTheme } from "./ThemeProvider";
                    hover:scale-95. 0.9 = shrink to 90%.
    The overrides keep hover behavior consistent across the viewer.
    ═══════════════════════════════════════════════════════════════ */
-const BORDER_RADIUS = "5px";
+const BORDER_RADIUS = "1px";
 const BUTTON_SHADOW = "3px 3px #000";
 const BUTTON_SCALE = 0.96;
 
@@ -96,15 +96,7 @@ let persistedScopeCollapse = "no";
    Accepts one snapshot {l,s,h,v} or the whole trace array [ {...}, ... ]
    (or pass it as the `snapshots` prop instead).
    ═══════════════════════════════════════════════════════════════ */
-const content = `
-
-
-
-[{"l":9,"s":{"main":[{"n":"arr","t":"int[][]","c":"None","value":[[10,20,30,40,50],[50,60,70,80,90],[90,100,110,120,100]],"a":[{"n":"","t":"int[]","c":"none","a":[{"n":"","t":"int","c":"none","value":10},{"n":"","t":"int","c":"none","value":20},{"n":"","t":"int","c":"none","value":30},{"n":"","t":"int","c":"none","value":40},{"n":"","t":"int","c":"none","value":50}]},{"n":"","t":"int[]","c":"none","a":[{"n":"","t":"int","c":"none","value":50},{"n":"","t":"int","c":"none","value":60},{"n":"","t":"int","c":"none","value":70},{"n":"","t":"int","c":"none","value":80},{"n":"","t":"int","c":"none","value":90}]},{"n":"","t":"int[]","c":"none","a":[{"n":"","t":"int","c":"none","value":90},{"n":"","t":"int","c":"none","value":100},{"n":"","t":"int","c":"none","value":110},{"n":"","t":"int","c":"none","value":120},{"n":"","t":"int","c":"none","value":100}]}]}]},"h":[{"n":"int[][]@55","t":"int[][]","c":"None","a":[{"n":"","t":"int[]","c":"none","a":[{"n":"","t":"int","c":"none","value":10},{"n":"","t":"int","c":"none","value":20},{"n":"","t":"int","c":"none","value":30},{"n":"","t":"int","c":"none","value":40},{"n":"","t":"int","c":"none","value":50}]},{"n":"","t":"int[]","c":"none","a":[{"n":"","t":"int","c":"none","value":50},{"n":"","t":"int","c":"none","value":60},{"n":"","t":"int","c":"none","value":70},{"n":"","t":"int","c":"none","value":80},{"n":"","t":"int","c":"none","value":90}]},{"n":"","t":"int[]","c":"none","a":[{"n":"","t":"int","c":"none","value":90},{"n":"","t":"int","c":"none","value":100},{"n":"","t":"int","c":"none","value":110},{"n":"","t":"int","c":"none","value":120},{"n":"","t":"int","c":"none","value":100}]}]},{"n":"int[]@57","t":"int[]","c":"None","a":[{"n":"","t":"int","c":"none","value":10},{"n":"","t":"int","c":"none","value":20},{"n":"","t":"int","c":"none","value":30},{"n":"","t":"int","c":"none","value":40},{"n":"","t":"int","c":"none","value":50}]},{"n":"int[]@58","t":"int[]","c":"None","a":[{"n":"","t":"int","c":"none","value":50},{"n":"","t":"int","c":"none","value":60},{"n":"","t":"int","c":"none","value":70},{"n":"","t":"int","c":"none","value":80},{"n":"","t":"int","c":"none","value":90}]},{"n":"int[]@59","t":"int[]","c":"None","a":[{"n":"","t":"int","c":"none","value":90},{"n":"","t":"int","c":"none","value":100},{"n":"","t":"int","c":"none","value":110},{"n":"","t":"int","c":"none","value":120},{"n":"","t":"int","c":"none","value":100}]}],"v":[{"n":"int[][]@55","c":"None","e":[{"n":"int[]@57","r":"[0]","c":"none"},{"n":"int[]@58","r":"[1]","c":"none"},{"n":"int[]@59","r":"[2]","c":"none"}]},{"n":"int[]@57","c":"None","e":[]},{"n":"int[]@58","c":"None","e":[]},{"n":"int[]@59","c":"None","e":[]}]}]
-
-
-
-  `;
+const content = ``;
 
 /* ---------------- helpers ---------------- */
 const isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
@@ -474,7 +466,6 @@ function VisualGraph({ nodes, heaps, dark, selectedObject, onSelectedObjectChang
     <div className="min-w-0">
       <div className="mb-3 grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] items-end gap-2">
         <label className="grid gap-1.5 text-xs font-bold">
-          <span>Display</span>
           <select value={view} onChange={(e) => setView(e.target.value)} className={field} style={{ colorScheme: dark ? "dark" : "light" }}>
             <option value="all">All objects ({graph.nodes.length})</option>
             {types.map((t) => (
@@ -574,7 +565,7 @@ export default function JavaVisual({ setLine, snapshots: snapshotsProp }) {
   const setSelectedObject = useCallback((id) => { selectedObjectId = id; setSelectedObjectState(id); }, []);
   const interactiveHover = "transition-transform duration-150";
 
-  const panel = dark ? "border-white bg-black text-white" : "border-black bg-white text-black";
+  const panel = dark ? "border-white bg-[##0b0b0b] text-white" : "border-black bg-white text-black";
   const surface = dark ? "border-white bg-zinc-900 text-white" : "border-black bg-gray-50 text-black";
   const inner = dark ? "border-white bg-black text-white" : "border-black bg-white text-black";
   const muted = dark ? "text-gray-400" : "text-gray-500";
@@ -715,7 +706,6 @@ export default function JavaVisual({ setLine, snapshots: snapshotsProp }) {
       </div>
 
       <section hidden={activeTab !== "visual"} role="tabpanel" id="trace-panel-visual" aria-labelledby="trace-tab-visual" className={`border p-4 ${panel}`}>
-        <div className="mb-3 flex items-center gap-2 font-bold"><span className="inline-block h-4 w-1 bg-red-500" />Visual Graph</div>
         <VisualGraph nodes={snap.v} heaps={snap.h} dark={dark} selectedObject={selectedObject} onSelectedObjectChange={setSelectedObject} view={graphView} setView={setGraphView} depth={graphDepth} setDepth={setGraphDepth} direction={graphDirection} setDirection={setGraphDirection} />
       </section>
 
