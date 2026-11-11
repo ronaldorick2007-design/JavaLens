@@ -35,13 +35,13 @@
   --hover: #1e1e1e;
   --selection: #5a2525;
   --line-hl: rgba(239, 68, 68, 0.1);
-  --tok-keyword: #ff7b72;
-  --tok-type: #7ee0f0;
-  --tok-string: #7ee787;
-  --tok-number: #f1d27a;
-  --tok-comment: #7d7d7d;
-  --tok-annotation: #e08cf0;
-  --tok-function: #8ab4ff;
+  --tok-keyword: #b91c1c;
+  --tok-type: #0e7490;
+  --tok-string: #15803d;
+  --tok-number: #e16207;
+  --tok-comment: #8a8a8a;
+  --tok-annotation: #a21caf;
+  --tok-function: #1d4ed8;
 }
 
 html, body, #root { width: 100%; height: 100%; margin: 0; }
