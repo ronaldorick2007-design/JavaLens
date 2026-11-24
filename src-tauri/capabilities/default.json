@@ -1,37 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "main-capability",
-  "description": "Minimal permissions for the JavaLens main window",
+  "identifier": "default",
+  "description": "enables the default permissions",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:default",
-    "core:event:default",
     "dialog:allow-open",
-    "dialog:allow-save",
-    "fs:allow-read-text-file",
-    "fs:allow-write-text-file",
-    "fs:allow-exists",
-    {
-      "identifier": "fs:scope",
-      "allow": [
-        {
-          "path": "$HOME"
-        },
-        {
-          "path": "$DESKTOP"
-        }
-      ]
-    },
-    "allow-javalens-commands",
-    {
-      "identifier": "opener:allow-open-url",
-      "allow": [
-        {
-          "url": "https://*"
-        }
-      ]
-    }
+    "dialog:allow-save"
   ]
 }
